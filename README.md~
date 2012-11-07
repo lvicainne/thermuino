@@ -53,9 +53,6 @@ For easing the use of the project, this is the PIN attributions :
 * For the inputs :
 -
 
-* For the outputs :
-- 
-
 **Nota : pins 10, 11, 12, 13 are used for Ethernet on Arduino Ethernet Boards. You can't use it comfortably for other situations**
 
 
