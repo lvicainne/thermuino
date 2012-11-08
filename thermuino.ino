@@ -1,20 +1,22 @@
 /*
-Thermuino, a control heat with Arduino
-Copyright (C) 2012 Louis VICAINNE <louis.vicainne@gmail.com>
-http://www.vicainne.fr
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License
-along with this program.  If not, see <http://www.gnu.org/licenses/>.
+* Thermuino, a control heat with Arduino
+* Copyright (C) 2012 Louis VICAINNE <louis.vicainne@gmail.com>
+* http://www.vicainne.fr
+*
+* This program is free software: you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* This program is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*
+* A part of the file has been created by SiliciumCorp.com
 */
 
 //LCD :
@@ -27,9 +29,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 //Sonde 1Wire :
 #include <OneWire.h>
+#include "DS18B20.h"
 
 //Horloge
 #include <Wire.h>
+#include "DallasTemperature.h"
 #include "DS1307.h"
 
 //Relay
@@ -45,7 +49,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define PIN_LED_ALIMENTATION 10
 
 #define PIN_ONE_WIRE 6
-#define DS18B20 0x28     // Adresse 1-Wire du DS18B20
+#define DS18B20_ADDRESS 0x28     // Adresse 1-Wire du DS18B20
 
 #define LCD_RS A1
 #define LCD_ENABLE A0
@@ -94,13 +98,14 @@ typedef struct Date Date;
 
 byte mac[] = {  0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xEE };  
 byte ip[] = {   192, 168, 1, 19};  
-
+byte ip_arduino_server[] = { 192, 168, 0, 2};
 
 LiquidCrystal lcd(LCD_RS, LCD_ENABLE, LCD_DATA4, LCD_DATA5, LCD_DATA6, LCD_DATA7);
 EthernetServer server(80);
 EthernetClient client;
-OneWire ds(PIN_ONE_WIRE);
+OneWire oneWire(PIN_ONE_WIRE);
 DS1307 ClockChip = DS1307();
+DallasTemperature sensors(&oneWire);
 Relay myRelay = Relay(PIN_RELAY);
 Relay myHeatingLed = Relay(PIN_LED_HEATING);
 
@@ -187,8 +192,48 @@ void initButtons() {
 }
 
 void initTemperature() {
+	sensors.begin();
+	
+	DeviceAddress tempDeviceAddress;
+
+
+	// Grab a count of devices on the wire
+	int numberOfDevices = sensors.getDeviceCount();
+
+	// locate devices on the bus
+	Serial.print("Locating devices...");
+
+	Serial.print("Found ");
+	Serial.print(numberOfDevices);
+	Serial.println(" devices.");
+
+	// report parasite power requirements
+	Serial.print("Parasite power is: "); 
+	if (sensors.isParasitePowerMode()) Serial.println("ON");
+	else Serial.println("OFF");
+
+	// Loop through each device, print out address
+	for(int i=0;i<numberOfDevices; i++) {
+		// Search the wire for address
+		if(sensors.getAddress(tempDeviceAddress, i)) {
+			Serial.print("Found device ");
+			Serial.print(i);
+			Serial.print(" with address: ");
+			
+			for (uint8_t i = 0; i < 8; i++) {
+				if (tempDeviceAddress[i] < 16) Serial.print("0");
+				Serial.print(tempDeviceAddress[i], HEX);
+			}
   
-  
+			Serial.println();
+
+		}else{
+			Serial.print("Found ghost device at ");
+			Serial.print(i, DEC);
+			Serial.print(" but could not detect address. Check power and cabling");
+		}
+	}
+
 }
 
 void initHorloge() {
@@ -198,8 +243,7 @@ void initHorloge() {
 
 
 void changeMode() {
-  currentMode = (currentMode + 1) % 3;
-  
+	currentMode = (currentMode + 1) % 5;
 }
 
 void incrementeTemp() {
@@ -370,44 +414,9 @@ void updateScreen() {
 
 
 void updateTemperature() {
-	getTemperature(&internTemperature);
-}
-
-
-boolean getTemperature(float *temp){
-	byte data[9], addr[8];
-	// data : Données lues depuis le scratchpad
-	// addr : adresse du module 1-Wire détecté
-
-	if (!ds.search(addr)) { // Recherche un module 1-Wire
-		ds.reset_search();    // Réinitialise la recherche de module
-		return false;         // Retourne une erreur
-	}
-  
-	if (OneWire::crc8(addr, 7) != addr[7]) // Vérifie que l'adresse a été correctement reçue
-		return false;                        // Si le message est corrompu on retourne une erreur
-
-	if (addr[0] != DS18B20) // Vérifie qu'il s'agit bien d'un DS18B20
-		return false;         // Si ce n'est pas le cas on retourne une erreur
+	sensors.requestTemperatures(); // Send the command to get temperatures
+	internTemperature = sensors.getTempCByIndex(0);
 	
-	ds.reset();             // On reset le bus 1-Wire
-	ds.select(addr);        // On sélectionne le DS18B20
-	
-	ds.write(0x44, 1);      // On lance une prise de mesure de température
-	delay(800);             // Et on attend la fin de la mesure
-  
-	ds.reset();             // On reset le bus 1-Wire
-	ds.select(addr);        // On sélectionne le DS18B20
-	ds.write(0xBE);         // On envoie une demande de lecture du scratchpad
-
-	for (byte i = 0; i < 9; i++) // On lit le scratchpad
-		data[i] = ds.read();       // Et on stock les octets reçus
-	
-	// Calcul de la température en degré Celsius
-	*temp = ((data[1] << 8) | data[0]) * 0.0625; 
-	
-	// Pas d'erreur
-	return true;
 }
 	
 void printTemperature(float valeur) {
@@ -416,7 +425,7 @@ void printTemperature(float valeur) {
 	lcd.write("C");
 }
 
-byte ip_arduino_server[] = { 64, 233, 187, 99 };
+
 
 void updateExternData() {
 /*	if (client.connect(ip_arduino_server, 80)) {
@@ -430,60 +439,40 @@ void updateExternData() {
 }
 
 void updateRelay() {
-  float tempreference = -1;
+	float tempreference = -1;
   
-  if(currentMode == MODE_ON) {
-    tempreference = progTemperature;
+	if(currentMode == MODE_ON) {
+		tempreference = progTemperature;
     
-  } else if (currentMode == MODE_OFF) {
-    tempreference = progTemperature - 5;
-    
-  }
- 
-  if (currentMode == MODE_FORCE_OFF) {
-    myRelay.setOff();
-    myHeatingLed.setOff();
-                
-  } else if (currentMode == MODE_FORCE_ON) {
-                myRelay.setOn();
-                myHeatingLed.setOn();
-  } else { //Auto-regulation
-    
-  
-  
-  
-	if(myRelay.isStateOFF() && ((tempreference - hysteresis) > internTemperature)) {
-		myRelay.setOn();
-                myHeatingLed.setOn();
-	} else if(!myRelay.isStateOFF() && ((tempreference + hysteresis) < internTemperature)) {
-		myRelay.setOff();
-                myHeatingLed.setOff();
+	} else if (currentMode == MODE_OFF) {
+		tempreference = progTemperature - 5;
+	
+	} else if(currentMode == MODE_AUTO) {
+		//Régulation du truc
 	}
-  
-  }
+ 
+	if (currentMode == MODE_FORCE_OFF) {
+		myRelay.setOff();
+		myHeatingLed.setOff();
+                
+	} else if (currentMode == MODE_FORCE_ON) {
+		myRelay.setOn();
+		myHeatingLed.setOn();
+	} else { //Auto-regulation
+      
+		if(myRelay.isStateOFF() && ((tempreference - hysteresis) > internTemperature)) {
+			myRelay.setOn();
+			myHeatingLed.setOn();
+		} else if(!myRelay.isStateOFF() && ((tempreference + hysteresis) < internTemperature)) {
+			myRelay.setOff();
+			myHeatingLed.setOff();
+		}
+		
+	}
 }
 
 
 void printEthernetPage(EthernetClient client, String requete) {
-	
-
-	
-	Serial.println(requete);
-	int pos = -1;
-	
-	if((pos = requete.indexOf(String("TEMP=")))   > 0) {
-		int posEnd = requete.indexOf(String("C"), pos);
-			  
-		if(posEnd > 0) {
-			String sub = requete.substring(pos + 5, posEnd);
-			//5correspond à la taille de TEMP=
-			lcd.print(sub);
-
-			char charBuf[6];
-			sub.toCharArray(charBuf, 6);
-			progTemperature = atof(charBuf);
-		}
-	}
 			
 	if(requete.indexOf(String("MODE=OFF")) > 0) {
 		currentMode = MODE_OFF;
@@ -497,10 +486,6 @@ void printEthernetPage(EthernetClient client, String requete) {
 		currentMode = MODE_FORCE_OFF;
 	} 
 			
-
-
-
-
 	client.print(("INTERN_TEMPERATURE="));
 	client.print(internTemperature);
 	client.write(CELCIUS_CHAR_SERIAL);
@@ -563,6 +548,7 @@ void loop() {
 	updateScreen();
 	updateRelay();
 
+
 	client = server.available();
 	if (client) {
 		
@@ -584,26 +570,47 @@ void loop() {
 				}
 	
 			} 
-	
+
+			Serial.println(requete);
+			int pos = -1;
+			
+			if((pos = requete.indexOf(String("TEMP=")))   > 0) {
+				int posEnd = requete.indexOf(String("C"), pos);
+					  
+				if(posEnd > 0) {
+					String sub = requete.substring(pos + 5, posEnd);
+					//5correspond à la taille de TEMP=
+					lcd.print(sub);
+
+					char charBuf[6];
+					sub.toCharArray(charBuf, 6);
+					progTemperature = atof(charBuf);
+				}
+			}
+
+
+		
+			client.println(("HTTP/1.1 200 OK"));
+			client.println(("Content-Type: text/plain"));
+			client.println(("Connnection: close"));
+			client.println();
+		
+			//print the page
+			printEthernetPage(client, requete);
+			
+			// give the web browser time to receive the data
+			delay(1);
+			
+			// close the connection:
+			client.stop();
+			
+			//Serial.println("Client Disconnected");
+				
 			client.stop();
 		}
-	
-		client.println(("HTTP/1.1 200 OK"));
-		client.println(("Content-Type: text/plain"));
-		client.println(("Connnection: close"));
-		client.println();
-		client.print(("INTERN_TEMPERATURE="));
-	
-		//print the page
-	//	printEthernetPage(&client, requete);
-		
-		// give the web browser time to receive the data
-		delay(1);
-		
-		// close the connection:
-		client.stop();
-		
-		//Serial.println("Client Disconnected");
+
+
+
 	}
 	
 	//Delay for buttons, updates, etc.
